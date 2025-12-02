@@ -4,6 +4,9 @@ import json
 import os
 from datetime import datetime
 
+# Configuration
+MACHINE_ID = "MACHINE_001"  # Change this to your machine identifier
+
 # Generate 10,000 random temperature values (simulating a 100x100 sensor array)
 # Temperature range: 20°C to 80°C
 temperatures = [round(random.uniform(20.0, 80.0), 2) for _ in range(10000)]
@@ -11,10 +14,17 @@ temperatures = [round(random.uniform(20.0, 80.0), 2) for _ in range(10000)]
 # Convert to comma-separated string
 temperatures_str = ','.join(map(str, temperatures))
 
+# Generate random power consumption (in kW) and vibration (in mm/s)
+power_consumption = round(random.uniform(10.0, 50.0), 2)
+vibration = round(random.uniform(0.5, 5.0), 2)
+
 # Create the request payload
 payload = {
+    "machine_id": MACHINE_ID,
     "timestep": datetime.now().isoformat(),
-    "temperatures": temperatures_str
+    "temperatures": temperatures_str,
+    "power_consumption": power_consumption,
+    "vibration": vibration
 }
 
 # Create output directory if it doesn't exist
@@ -33,9 +43,12 @@ print()
 url = "http://localhost:8000/telemetry"
 
 print("Sending telemetry data with 10,000 temperature values...")
+print(f"Machine ID: {payload['machine_id']}")
 print(f"Timestep: {payload['timestep']}")
 print(f"Temperature sample (first 10): {temperatures[:10]}")
 print(f"Total values: {len(temperatures)}")
+print(f"Power Consumption: {payload['power_consumption']} kW")
+print(f"Vibration: {payload['vibration']} mm/s")
 print()
 
 try:

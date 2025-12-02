@@ -14,8 +14,11 @@ def receive_telemetry():
     
     Expected JSON format:
     {
+        "machine_id": "MACHINE_001",
         "timestep": "2025-12-01T10:30:00",  # or integer timestep
-        "temperatures": "temp1,temp2,temp3,..."  # comma-separated values (10,000 values)
+        "temperatures": "temp1,temp2,temp3,...",  # comma-separated values (10,000 values)
+        "power_consumption": 25.5,  # in kW
+        "vibration": 2.3  # in mm/s
     }
     """
     try:
@@ -25,15 +28,27 @@ def receive_telemetry():
         if not data:
             return jsonify({"error": "No JSON data provided"}), 400
         
-        # Extract timestep and temperatures
+        # Extract fields
+        machine_id = data.get('machine_id')
         timestep = data.get('timestep')
         temperatures_str = data.get('temperatures')
+        power_consumption = data.get('power_consumption')
+        vibration = data.get('vibration')
+        
+        if machine_id is None:
+            return jsonify({"error": "Missing 'machine_id' field"}), 400
         
         if timestep is None:
             return jsonify({"error": "Missing 'timestep' field"}), 400
         
         if temperatures_str is None:
             return jsonify({"error": "Missing 'temperatures' field"}), 400
+        
+        if power_consumption is None:
+            return jsonify({"error": "Missing 'power_consumption' field"}), 400
+        
+        if vibration is None:
+            return jsonify({"error": "Missing 'vibration' field"}), 400
         
         # Parse comma-separated temperature values
         try:
@@ -52,8 +67,11 @@ def receive_telemetry():
         
         # Store the data
         telemetry_entry = {
+            "machine_id": machine_id,
             "timestep": timestep,
             "temperatures": temp_array.tolist(),  # Convert to list for JSON serialization
+            "power_consumption": power_consumption,
+            "vibration": vibration,
             "received_at": datetime.now().isoformat(),
             "stats": {
                 "min": float(np.min(temp_array)),
@@ -68,8 +86,11 @@ def receive_telemetry():
         return jsonify({
             "status": "success",
             "message": "Telemetry data received",
+            "machine_id": machine_id,
             "timestep": timestep,
             "array_shape": [100, 100],
+            "power_consumption": power_consumption,
+            "vibration": vibration,
             "total_records": len(telemetry_data),
             "stats": telemetry_entry["stats"]
         }), 201
