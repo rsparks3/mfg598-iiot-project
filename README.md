@@ -55,7 +55,7 @@ The OPC UA server will start on `opc.tcp://0.0.0.0:4840/freeopcua/server/`
 
 **Step 5: Start the Physical Device Simulator (Terminal 3)**
 ```bash
-python physical-device-test.py
+python physical-device.py
 ```
 This will begin generating and transmitting telemetry data
 
@@ -119,7 +119,7 @@ Data stored successfully with ID: 1
 
 ## Components
 
-### Physical Device (`physical-device-test.py`)
+### Physical Device (`physical-device.py`)
 Simulates a DMLS 3D printer sensor array that generates telemetry data. The physical device collects:
 - **Temperature data**: 10,000 temperature readings (100×100 sensor array) ranging from 20°C to 80°C
 - **Power consumption**: Machine power usage in kW

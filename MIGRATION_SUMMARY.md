@@ -33,7 +33,7 @@ All code has been updated to use your actual data format from the `results/` fol
    - Changed buffering/averaging logic for 1581 values
    - Handles temperature arrays (JSON format)
 
-3. **physical-device-test.py**
+3. **physical-device.py**
    - Reads actual `snapshot_*.json` files from `results/` folder
    - Sends real data instead of generating random values
    - Iterates through all available snapshot files
@@ -76,7 +76,7 @@ Wait for: `🚀 OPC UA Telemetry Server started`
 
 **Terminal 3 - Physical Device (Data Sender):**
 ```powershell
-python .\physical-device-test.py
+python .\physical-device.py
 ```
 This will read all `snapshot_*.json` files from `results/` and send them through the pipeline.
 
