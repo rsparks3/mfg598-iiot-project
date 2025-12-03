@@ -4,3 +4,6 @@ requests
 psycopg2-binary
 python-dotenv
 asyncua
+streamlit
+plotly
+pandas

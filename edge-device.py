@@ -14,7 +14,7 @@ CLOUD_DEVICE_URL = os.getenv('CLOUD_DEVICE_URL', 'http://localhost:8067/telemetr
 
 # Buffer to store telemetry data points
 telemetry_buffer = []
-BUFFER_SIZE = 10
+BUFFER_SIZE = 4
 
 def send_to_cloud(machine_id, timestep, temperatures, power_consumption, vibration):
     """

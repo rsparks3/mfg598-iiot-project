@@ -6,7 +6,7 @@ from datetime import datetime
 from asyncua import Client
 
 # Configuration
-MACHINE_ID = "MACHINE_001"  # Change this to your machine identifier
+MACHINE_ID = "MACHINE_002"  # Change this to your machine identifier
 
 async def send_single_telemetry(client, iteration):
     """
