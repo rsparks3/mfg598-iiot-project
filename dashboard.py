@@ -112,7 +112,7 @@ def create_temperature_scatter(nodes, temp_array, title="Temperature Distributio
         y=y_coords,
         mode='markers',
         marker=dict(
-            size=8,
+            size=10, 
             color=temps,
             colorscale='RdBu_r',  # Red for hot, Blue for cold
             colorbar=dict(title="Temperature (K)"),
