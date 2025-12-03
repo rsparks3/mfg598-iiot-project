@@ -169,48 +169,88 @@ def receive_telemetry():
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 
+@app.route('/machines', methods=['GET'])
+def get_machines():
+    """
+    Endpoint to retrieve all unique machine IDs.
+    """
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        cur.execute("SELECT DISTINCT machine_id FROM telemetry ORDER BY machine_id")
+        machines = [row[0] for row in cur.fetchall()]
+        
+        cur.close()
+        conn.close()
+        
+        return jsonify({
+            "machines": machines,
+            "total": len(machines)
+        }), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to retrieve machines: {str(e)}"}), 500
+
+
 @app.route('/telemetry', methods=['GET'])
 def get_telemetry():
     """
-    Endpoint to retrieve all stored telemetry data.
+    Endpoint to retrieve all stored telemetry data, optionally filtered by machine_id.
+    Query parameters:
+        - machine_id: Filter by specific machine (optional)
     """
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    
-    cur.execute("""
-        SELECT id, machine_id, timestep, temperatures, power_consumption, 
-               vibration, received_at, min_temp, max_temp, mean_temp, std_temp
-        FROM telemetry
-        ORDER BY received_at DESC
-    """)
-    
-    records = cur.fetchall()
-    cur.close()
-    conn.close()
-    
-    # Convert records to list of dicts
-    data = []
-    for record in records:
-        data.append({
-            "id": record["id"],
-            "machine_id": record["machine_id"],
-            "timestep": record["timestep"],
-            "temperatures": record["temperatures"],
-            "power_consumption": record["power_consumption"],
-            "vibration": record["vibration"],
-            "received_at": record["received_at"].isoformat(),
-            "stats": {
-                "min": record["min_temp"],
-                "max": record["max_temp"],
-                "mean": record["mean_temp"],
-                "std": record["std_temp"]
-            }
-        })
-    
-    return jsonify({
-        "total_records": len(data),
-        "data": data
-    }), 200
+    try:
+        machine_id = request.args.get('machine_id')
+        
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        
+        if machine_id:
+            cur.execute("""
+                SELECT id, machine_id, timestep, temperatures, power_consumption, 
+                       vibration, received_at, min_temp, max_temp, mean_temp, std_temp
+                FROM telemetry
+                WHERE machine_id = %s
+                ORDER BY received_at ASC
+            """, (machine_id,))
+        else:
+            cur.execute("""
+                SELECT id, machine_id, timestep, temperatures, power_consumption, 
+                       vibration, received_at, min_temp, max_temp, mean_temp, std_temp
+                FROM telemetry
+                ORDER BY received_at DESC
+            """)
+        
+        records = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        # Convert records to list of dicts
+        data = []
+        for record in records:
+            data.append({
+                "id": record["id"],
+                "machine_id": record["machine_id"],
+                "timestep": record["timestep"],
+                "temperatures": record["temperatures"],
+                "power_consumption": record["power_consumption"],
+                "vibration": record["vibration"],
+                "received_at": record["received_at"].isoformat(),
+                "stats": {
+                    "min": record["min_temp"],
+                    "max": record["max_temp"],
+                    "mean": record["mean_temp"],
+                    "std": record["std_temp"]
+                }
+            })
+        
+        return jsonify({
+            "total_records": len(data),
+            "machine_id": machine_id,
+            "data": data
+        }), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to retrieve telemetry: {str(e)}"}), 500
 
 
 @app.route('/telemetry/<int:index>', methods=['GET'])

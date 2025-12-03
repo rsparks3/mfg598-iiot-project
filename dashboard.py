@@ -1,6 +1,5 @@
 import streamlit as st
-import psycopg2
-import psycopg2.extras
+import requests
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -10,56 +9,50 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Database connection parameters
-DB_CONFIG = {
-    'host': os.getenv('DB_HOST', 'localhost'),
-    'port': os.getenv('DB_PORT', '5432'),
-    'database': os.getenv('DB_NAME', 'telemetry_db'),
-    'user': os.getenv('DB_USER', 'postgres'),
-    'password': os.getenv('DB_PASSWORD', 'postgres')
-}
-
-def get_db_connection():
-    """Create a database connection."""
-    return psycopg2.connect(**DB_CONFIG)
+# API configuration
+API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:8067')
 
 @st.cache_data(ttl=5)
 def get_all_machines():
-    """Get list of all unique machine IDs."""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT DISTINCT machine_id FROM telemetry ORDER BY machine_id")
-    machines = [row[0] for row in cur.fetchall()]
-    cur.close()
-    conn.close()
-    return machines
+    """Get list of all unique machine IDs from API."""
+    try:
+        response = requests.get(f"{API_BASE_URL}/machines")
+        response.raise_for_status()
+        data = response.json()
+        return data.get('machines', [])
+    except requests.exceptions.RequestException as e:
+        st.error(f"Failed to fetch machines: {str(e)}")
+        return []
 
 @st.cache_data(ttl=5)
 def get_telemetry_records(machine_id=None):
-    """Get all telemetry records, optionally filtered by machine_id."""
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    
-    if machine_id:
-        cur.execute("""
-            SELECT id, machine_id, timestep, temperatures, power_consumption, 
-                   vibration, received_at, min_temp, max_temp, mean_temp, std_temp
-            FROM telemetry
-            WHERE machine_id = %s
-            ORDER BY received_at ASC
-        """, (machine_id,))
-    else:
-        cur.execute("""
-            SELECT id, machine_id, timestep, temperatures, power_consumption, 
-                   vibration, received_at, min_temp, max_temp, mean_temp, std_temp
-            FROM telemetry
-            ORDER BY received_at ASC
-        """)
-    
-    records = cur.fetchall()
-    cur.close()
-    conn.close()
-    return records
+    """Get all telemetry records from API, optionally filtered by machine_id."""
+    try:
+        params = {'machine_id': machine_id} if machine_id else {}
+        response = requests.get(f"{API_BASE_URL}/telemetry", params=params)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Convert API response to match expected format
+        records = []
+        for item in data.get('data', []):
+            records.append({
+                'id': item['id'],
+                'machine_id': item['machine_id'],
+                'timestep': item['timestep'],
+                'temperatures': item['temperatures'],
+                'power_consumption': item['power_consumption'],
+                'vibration': item['vibration'],
+                'received_at': datetime.fromisoformat(item['received_at']),
+                'min_temp': item['stats']['min'],
+                'max_temp': item['stats']['max'],
+                'mean_temp': item['stats']['mean'],
+                'std_temp': item['stats']['std']
+            })
+        return records
+    except requests.exceptions.RequestException as e:
+        st.error(f"Failed to fetch telemetry data: {str(e)}")
+        return []
 
 def create_temperature_heatmap(temp_array, title="Temperature Heatmap"):
     """Create a Plotly heatmap from temperature array."""
