@@ -1,136 +1,190 @@
-from flask import Flask, request, jsonify
+import asyncio
 import numpy as np
 from datetime import datetime
+import os
+from dotenv import load_dotenv
+import json
+import requests
+from asyncua import Server, ua
 
-app = Flask(__name__)
+load_dotenv()
 
-# Store telemetry data (in-memory storage for now)
-telemetry_data = []
+# Cloud device endpoint
+CLOUD_DEVICE_URL = os.getenv('CLOUD_DEVICE_URL', 'http://localhost:8067/telemetry')
 
-@app.route('/telemetry', methods=['POST'])
-def receive_telemetry():
+# Buffer to store telemetry data points
+telemetry_buffer = []
+BUFFER_SIZE = 10
+
+def send_to_cloud(machine_id, timestep, temperatures, power_consumption, vibration):
     """
-    Endpoint to receive telemetry data with a 100x100 temperature array.
-    
-    Expected JSON format:
-    {
-        "machine_id": "MACHINE_001",
-        "timestep": "2025-12-01T10:30:00",  # or integer timestep
-        "temperatures": "temp1,temp2,temp3,...",  # comma-separated values (10,000 values)
-        "power_consumption": 25.5,  # in kW
-        "vibration": 2.3  # in mm/s
-    }
+    Send averaged telemetry data to cloud device via HTTP POST.
     """
     try:
-        # Get JSON data from request
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({"error": "No JSON data provided"}), 400
-        
-        # Extract fields
-        machine_id = data.get('machine_id')
-        timestep = data.get('timestep')
-        temperatures_str = data.get('temperatures')
-        power_consumption = data.get('power_consumption')
-        vibration = data.get('vibration')
-        
-        if machine_id is None:
-            return jsonify({"error": "Missing 'machine_id' field"}), 400
-        
-        if timestep is None:
-            return jsonify({"error": "Missing 'timestep' field"}), 400
-        
-        if temperatures_str is None:
-            return jsonify({"error": "Missing 'temperatures' field"}), 400
-        
-        if power_consumption is None:
-            return jsonify({"error": "Missing 'power_consumption' field"}), 400
-        
-        if vibration is None:
-            return jsonify({"error": "Missing 'vibration' field"}), 400
-        
-        # Parse comma-separated temperature values
-        try:
-            temperatures = [float(temp.strip()) for temp in temperatures_str.split(',')]
-        except ValueError:
-            return jsonify({"error": "Invalid temperature values. Must be numeric."}), 400
-        
-        # Validate that we have exactly 10,000 values (100x100)
-        if len(temperatures) != 10000:
-            return jsonify({
-                "error": f"Invalid array size. Expected 10,000 values (100x100), got {len(temperatures)}"
-            }), 400
-        
-        # Convert to numpy array and reshape to 100x100
-        temp_array = np.array(temperatures).reshape(100, 100)
-        
-        # Store the data
-        telemetry_entry = {
+        payload = {
             "machine_id": machine_id,
             "timestep": timestep,
-            "temperatures": temp_array.tolist(),  # Convert to list for JSON serialization
+            "temperatures": temperatures,
             "power_consumption": power_consumption,
-            "vibration": vibration,
-            "received_at": datetime.now().isoformat(),
-            "stats": {
-                "min": float(np.min(temp_array)),
-                "max": float(np.max(temp_array)),
-                "mean": float(np.mean(temp_array)),
-                "std": float(np.std(temp_array))
-            }
+            "vibration": vibration
         }
         
-        telemetry_data.append(telemetry_entry)
+        response = requests.post(CLOUD_DEVICE_URL, json=payload, timeout=10)
+        response.raise_for_status()
         
-        return jsonify({
-            "status": "success",
-            "message": "Telemetry data received",
-            "machine_id": machine_id,
-            "timestep": timestep,
-            "array_shape": [100, 100],
-            "power_consumption": power_consumption,
-            "vibration": vibration,
-            "total_records": len(telemetry_data),
-            "stats": telemetry_entry["stats"]
-        }), 201
+        result = response.json()
+        print(f"✅ Data sent to cloud device successfully")
+        print(f"   Record ID: {result.get('record_id')}")
+        print(f"   Machine: {machine_id}, Timestep: {timestep}")
+        print(f"   Stats - Min: {result['stats']['min']:.2f}, Max: {result['stats']['max']:.2f}, Mean: {result['stats']['mean']:.2f}, Std: {result['stats']['std']:.2f}")
+        
+        return result.get('record_id')
+        
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Error sending data to cloud device: {str(e)}")
+        return None
+    except Exception as e:
+        print(f"❌ Unexpected error: {str(e)}")
+        return None
+
+def process_telemetry(machine_id, timestep, temperatures, power_consumption, vibration):
+    """
+    Collect telemetry data and average every 10 points before sending to cloud.
+    """
+    global telemetry_buffer
+    
+    try:
+        # Parse comma-separated temperature values
+        temp_list = [float(temp.strip()) for temp in temperatures.split(',')]
+        
+        # Validate that we have exactly 10,000 values (100x100)
+        if len(temp_list) != 10000:
+            print(f"Invalid array size. Expected 10,000 values (100x100), got {len(temp_list)}")
+            return None
+        
+        # Convert to numpy array
+        temp_array = np.array(temp_list)
+        
+        # Add to buffer
+        telemetry_buffer.append({
+            'machine_id': machine_id,
+            'timestep': timestep,
+            'temperatures': temp_array,
+            'power_consumption': power_consumption,
+            'vibration': vibration
+        })
+        
+        print(f"📊 Buffered telemetry point {len(telemetry_buffer)}/{BUFFER_SIZE} from {machine_id}")
+        
+        # If buffer is full, average and send
+        if len(telemetry_buffer) >= BUFFER_SIZE:
+            print(f"\n🔄 Averaging {BUFFER_SIZE} telemetry points...")
+            
+            # Average the temperature arrays
+            avg_temperatures = np.mean([item['temperatures'] for item in telemetry_buffer], axis=0)
+            
+            # Average power consumption and vibration
+            avg_power = np.mean([item['power_consumption'] for item in telemetry_buffer])
+            avg_vibration = np.mean([item['vibration'] for item in telemetry_buffer])
+            
+            # Use the most recent machine_id and timestep
+            final_machine_id = telemetry_buffer[-1]['machine_id']
+            final_timestep = telemetry_buffer[-1]['timestep']
+            
+            # Convert averaged temperatures back to comma-separated string
+            temp_string = ','.join(map(str, avg_temperatures.tolist()))
+            
+            # Send to cloud
+            record_id = send_to_cloud(final_machine_id, final_timestep, temp_string, avg_power, avg_vibration)
+            
+            # Clear buffer
+            telemetry_buffer = []
+            
+            return record_id
+        
+        return None
         
     except Exception as e:
-        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+        print(f"❌ Error processing telemetry: {str(e)}")
+        return None
 
-
-@app.route('/telemetry', methods=['GET'])
-def get_telemetry():
+async def main():
     """
-    Endpoint to retrieve all stored telemetry data.
+    Main function to set up and run the OPC UA server.
     """
-    return jsonify({
-        "total_records": len(telemetry_data),
-        "data": telemetry_data
-    }), 200
-
-
-@app.route('/telemetry/<int:index>', methods=['GET'])
-def get_telemetry_by_index(index):
-    """
-    Endpoint to retrieve a specific telemetry record by index.
-    """
-    if 0 <= index < len(telemetry_data):
-        return jsonify(telemetry_data[index]), 200
-    else:
-        return jsonify({"error": "Index out of range"}), 404
-
-
-@app.route('/health', methods=['GET'])
-def health_check():
-    """
-    Health check endpoint.
-    """
-    return jsonify({
-        "status": "healthy",
-        "total_records": len(telemetry_data)
-    }), 200
-
+    print(f"🌐 Cloud device endpoint: {CLOUD_DEVICE_URL}")
+    print(f"📦 Buffer size: {BUFFER_SIZE} points\n")
+    
+    # Create OPC UA server
+    server = Server()
+    await server.init()
+    
+    server.set_endpoint("opc.tcp://0.0.0.0:4840/telemetry/server/")
+    server.set_server_name("Telemetry OPC UA Server")
+    
+    # Setup namespace
+    uri = "http://telemetry.opcua.server"
+    idx = await server.register_namespace(uri)
+    
+    # Create object node for telemetry
+    objects = server.nodes.objects
+    telemetry_object = await objects.add_object(idx, "TelemetryObject")
+    
+    # Create variables for telemetry data
+    machine_id_var = await telemetry_object.add_variable(idx, "MachineID", "")
+    timestep_var = await telemetry_object.add_variable(idx, "Timestep", "")
+    temperatures_var = await telemetry_object.add_variable(idx, "Temperatures", "")
+    power_consumption_var = await telemetry_object.add_variable(idx, "PowerConsumption", 0.0)
+    vibration_var = await telemetry_object.add_variable(idx, "Vibration", 0.0)
+    trigger_var = await telemetry_object.add_variable(idx, "TriggerStorage", False)
+    result_var = await telemetry_object.add_variable(idx, "LastRecordID", 0)
+    
+    # Make variables writable
+    await machine_id_var.set_writable()
+    await timestep_var.set_writable()
+    await temperatures_var.set_writable()
+    await power_consumption_var.set_writable()
+    await vibration_var.set_writable()
+    await trigger_var.set_writable()
+    
+    # Subscribe to trigger variable changes
+    class TriggerHandler:
+        async def datachange_notification(self, node, val, data):
+            if val:  # When trigger is set to True
+                # Read all the values
+                machine_id = await machine_id_var.read_value()
+                timestep = await timestep_var.read_value()
+                temperatures = await temperatures_var.read_value()
+                power_consumption = await power_consumption_var.read_value()
+                vibration = await vibration_var.read_value()
+                
+                print(f"\n📥 Received telemetry data from {machine_id}")
+                record_id = process_telemetry(machine_id, timestep, temperatures, power_consumption, vibration)
+                
+                # Write result back
+                await result_var.write_value(record_id if record_id else 0)
+                
+                # Reset trigger
+                await trigger_var.write_value(False)
+    
+    handler = TriggerHandler()
+    sub = await server.create_subscription(100, handler)
+    await sub.subscribe_data_change(trigger_var)
+    
+    print("\n🚀 OPC UA Telemetry Server started")
+    print("   Endpoint: opc.tcp://0.0.0.0:4840/telemetry/server/")
+    print("   Namespace: " + uri)
+    print("   Variables: MachineID, Timestep, Temperatures, PowerConsumption, Vibration")
+    print("   Trigger: TriggerStorage (set to True to store data)")
+    print("   Result: LastRecordID (read after trigger)")
+    print("\nWaiting for telemetry data...")
+    
+    async with server:
+        while True:
+            await asyncio.sleep(1)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000, debug=True)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n\n👋 Server stopped")

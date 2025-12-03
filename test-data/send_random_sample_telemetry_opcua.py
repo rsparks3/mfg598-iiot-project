@@ -8,9 +8,9 @@ from asyncua import Client
 # Configuration
 MACHINE_ID = "MACHINE_001"  # Change this to your machine identifier
 
-async def send_telemetry():
+async def send_single_telemetry(client, iteration):
     """
-    Send telemetry data via OPC UA method call.
+    Send a single telemetry data packet via OPC UA.
     """
     # Generate 10,000 random temperature values (simulating a 100x100 sensor array)
     # Temperature range: 20°C to 80°C
@@ -41,13 +41,10 @@ async def send_telemetry():
     output_filename = os.path.join(output_dir, f"telemetry_request_opcua_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
     with open(output_filename, 'w') as f:
         json.dump(payload, f, indent=2)
-    print(f"✅ Request payload saved to: {output_filename}")
+    print(f"✅ [{iteration}/10] Request payload saved to: {output_filename}")
     print()
     
-    # Send telemetry via OPC UA
-    url = "opc.tcp://localhost:4840/telemetry/server/"
-    
-    print("Sending telemetry data with 10,000 temperature values via OPC UA...")
+    print(f"[{iteration}/10] Sending telemetry data with 10,000 temperature values via OPC UA...")
     print(f"Machine ID: {payload['machine_id']}")
     print(f"Timestep: {payload['timestep']}")
     print(f"Temperature sample (first 10): {temperatures[:10]}")
@@ -57,11 +54,6 @@ async def send_telemetry():
     print()
     
     try:
-        # Create OPC UA client
-        client = Client(url=url)
-        await client.connect()
-        print(f"✅ Connected to OPC UA server at {url}")
-        
         # Get the root node
         root = client.nodes.root
         
@@ -91,16 +83,50 @@ async def send_telemetry():
         await trigger_var.write_value(True)
         
         # Wait a moment for processing
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.5)
         
         # Read the result
         result = await result_var.read_value()
         
-        print(f"\n✅ Telemetry sent successfully!")
-        print(f"Record ID: {result}")
+        print(f"\n✅ [{iteration}/10] Telemetry sent successfully!")
+        print(f"Record ID: {result}\n")
+        
+    except Exception as e:
+        print(f"❌ [{iteration}/10] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+async def send_telemetry():
+    """
+    Send 10 telemetry data packets via OPC UA with a 200ms delay between them.
+    """
+    # Create output directory if it doesn't exist
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_dir = os.path.join(script_dir, "telemetry-requests")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Send telemetry via OPC UA
+    url = "opc.tcp://localhost:4840/telemetry/server/"
+    
+    try:
+        # Create OPC UA client
+        client = Client(url=url)
+        await client.connect()
+        print(f"✅ Connected to OPC UA server at {url}\n")
+        
+        # Send 10 telemetry messages
+        for i in range(1, 11):
+            await send_single_telemetry(client, i)
+            
+            # Delay between messages (except after the last one)
+            if i < 10:
+                await asyncio.sleep(0.2)  # 200ms delay
         
         await client.disconnect()
         print("✅ Disconnected from OPC UA server")
+        print(f"\n🎉 Successfully sent all 10 telemetry messages!")
         
     except ConnectionRefusedError:
         print("❌ Error: Could not connect to the OPC UA server.")
