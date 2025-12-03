@@ -35,9 +35,10 @@ def init_db():
             id SERIAL PRIMARY KEY,
             machine_id VARCHAR(100) NOT NULL,
             timestep VARCHAR(100) NOT NULL,
+            simulation_time VARCHAR(50),
+            num_nodes INTEGER NOT NULL,
             temperatures JSONB NOT NULL,
             power_consumption FLOAT NOT NULL,
-            vibration FLOAT NOT NULL,
             received_at TIMESTAMP NOT NULL,
             min_temp FLOAT,
             max_temp FLOAT,
@@ -62,15 +63,16 @@ init_db()
 @app.route('/telemetry', methods=['POST'])
 def receive_telemetry():
     """
-    Endpoint to receive telemetry data with a 100x100 temperature array.
+    Endpoint to receive telemetry data with 1581 temperature node values.
     
     Expected JSON format:
     {
         "machine_id": "MACHINE_001",
-        "timestep": "2025-12-01T10:30:00",  # or integer timestep
-        "temperatures": "temp1,temp2,temp3,...",  # comma-separated values (10,000 values)
-        "power_consumption": 25.5,  # in kW
-        "vibration": 2.3  # in mm/s
+        "timestep": "2025-12-03T16:20:43.396561Z",
+        "simulation_time": "0.04",
+        "num_nodes": 1581,
+        "temperatures": [295.15, 295.15, ...],  # array of 1581 values
+        "power_consumption": 285.0  # in watts
     }
     """
     try:
@@ -83,9 +85,10 @@ def receive_telemetry():
         # Extract fields
         machine_id = data.get('machine_id')
         timestep = data.get('timestep')
-        temperatures_str = data.get('temperatures')
+        simulation_time = data.get('simulation_time', '')
+        num_nodes = data.get('num_nodes')
+        temperatures = data.get('temperatures')
         power_consumption = data.get('power_consumption')
-        vibration = data.get('vibration')
         
         if machine_id is None:
             return jsonify({"error": "Missing 'machine_id' field"}), 400
@@ -93,29 +96,27 @@ def receive_telemetry():
         if timestep is None:
             return jsonify({"error": "Missing 'timestep' field"}), 400
         
-        if temperatures_str is None:
+        if temperatures is None:
             return jsonify({"error": "Missing 'temperatures' field"}), 400
         
         if power_consumption is None:
             return jsonify({"error": "Missing 'power_consumption' field"}), 400
         
-        if vibration is None:
-            return jsonify({"error": "Missing 'vibration' field"}), 400
+        if num_nodes is None:
+            return jsonify({"error": "Missing 'num_nodes' field"}), 400
         
-        # Parse comma-separated temperature values
-        try:
-            temperatures = [float(temp.strip()) for temp in temperatures_str.split(',')]
-        except ValueError:
-            return jsonify({"error": "Invalid temperature values. Must be numeric."}), 400
+        # Validate temperatures is a list/array
+        if not isinstance(temperatures, list):
+            return jsonify({"error": "Temperatures must be an array"}), 400
         
-        # Validate that we have exactly 10,000 values (100x100)
-        if len(temperatures) != 10000:
+        # Validate that we have exactly 1581 values (number of nodes)
+        if len(temperatures) != 1581:
             return jsonify({
-                "error": f"Invalid array size. Expected 10,000 values (100x100), got {len(temperatures)}"
+                "error": f"Invalid array size. Expected 1581 values, got {len(temperatures)}"
             }), 400
         
-        # Convert to numpy array and reshape to 100x100
-        temp_array = np.array(temperatures).reshape(100, 100)
+        # Convert to numpy array (keep as 1D)
+        temp_array = np.array(temperatures)
         
         # Calculate statistics
         stats = {
@@ -131,16 +132,17 @@ def receive_telemetry():
         
         cur.execute("""
             INSERT INTO telemetry 
-            (machine_id, timestep, temperatures, power_consumption, vibration, 
+            (machine_id, timestep, simulation_time, num_nodes, temperatures, power_consumption, 
              received_at, min_temp, max_temp, mean_temp, std_temp)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             machine_id,
             str(timestep),
+            str(simulation_time),
+            num_nodes,
             json.dumps(temp_array.tolist()),
             power_consumption,
-            vibration,
             datetime.now(),
             stats["min"],
             stats["max"],
@@ -159,9 +161,9 @@ def receive_telemetry():
             "record_id": record_id,
             "machine_id": machine_id,
             "timestep": timestep,
-            "array_shape": [100, 100],
+            "simulation_time": simulation_time,
+            "num_nodes": num_nodes,
             "power_consumption": power_consumption,
-            "vibration": vibration,
             "stats": stats
         }), 201
         
@@ -207,16 +209,16 @@ def get_telemetry():
         
         if machine_id:
             cur.execute("""
-                SELECT id, machine_id, timestep, temperatures, power_consumption, 
-                       vibration, received_at, min_temp, max_temp, mean_temp, std_temp
+                SELECT id, machine_id, timestep, simulation_time, num_nodes, temperatures, power_consumption, 
+                       received_at, min_temp, max_temp, mean_temp, std_temp
                 FROM telemetry
                 WHERE machine_id = %s
                 ORDER BY received_at ASC
             """, (machine_id,))
         else:
             cur.execute("""
-                SELECT id, machine_id, timestep, temperatures, power_consumption, 
-                       vibration, received_at, min_temp, max_temp, mean_temp, std_temp
+                SELECT id, machine_id, timestep, simulation_time, num_nodes, temperatures, power_consumption, 
+                       received_at, min_temp, max_temp, mean_temp, std_temp
                 FROM telemetry
                 ORDER BY received_at DESC
             """)
@@ -232,9 +234,10 @@ def get_telemetry():
                 "id": record["id"],
                 "machine_id": record["machine_id"],
                 "timestep": record["timestep"],
+                "simulation_time": record["simulation_time"],
+                "num_nodes": record["num_nodes"],
                 "temperatures": record["temperatures"],
                 "power_consumption": record["power_consumption"],
-                "vibration": record["vibration"],
                 "received_at": record["received_at"].isoformat(),
                 "stats": {
                     "min": record["min_temp"],
@@ -262,8 +265,8 @@ def get_telemetry_by_index(index):
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     
     cur.execute("""
-        SELECT id, machine_id, timestep, temperatures, power_consumption, 
-               vibration, received_at, min_temp, max_temp, mean_temp, std_temp
+        SELECT id, machine_id, timestep, simulation_time, num_nodes, temperatures, power_consumption, 
+               received_at, min_temp, max_temp, mean_temp, std_temp
         FROM telemetry
         WHERE id = %s
     """, (index,))
@@ -277,9 +280,10 @@ def get_telemetry_by_index(index):
             "id": record["id"],
             "machine_id": record["machine_id"],
             "timestep": record["timestep"],
+            "simulation_time": record["simulation_time"],
+            "num_nodes": record["num_nodes"],
             "temperatures": record["temperatures"],
             "power_consumption": record["power_consumption"],
-            "vibration": record["vibration"],
             "received_at": record["received_at"].isoformat(),
             "stats": {
                 "min": record["min_temp"],

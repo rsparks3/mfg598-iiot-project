@@ -1,35 +1,42 @@
 import asyncio
-import random
+import glob
 import json
 import os
 from datetime import datetime
 from asyncua import Client
 
 # Configuration
-MACHINE_ID = "MACHINE_002"  # Change this to your machine identifier
+MACHINE_ID = "MACHINE_001"  # Change this to your machine identifier
+RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 
-async def send_single_telemetry(client, iteration):
+async def send_single_telemetry(client, iteration, snapshot_file):
     """
-    Send a single telemetry data packet via OPC UA.
+    Send a single telemetry data packet via OPC UA from snapshot JSON file.
     """
-    # Generate 10,000 random temperature values (simulating a 100x100 sensor array)
-    # Temperature range: 20°C to 80°C
-    temperatures = [round(random.uniform(20.0, 80.0), 2) for _ in range(10000)]
+    # Load snapshot data from JSON file
+    with open(snapshot_file, 'r') as f:
+        snapshot_data = json.load(f)
     
-    # Convert to comma-separated string
-    temperatures_str = ','.join(map(str, temperatures))
+    # Extract data from snapshot
+    machine_id = snapshot_data.get('machine_id', MACHINE_ID)
+    timestamp = snapshot_data.get('timestamp', datetime.now().isoformat())
+    simulation_time = snapshot_data.get('simulation_time', '')
+    power_consumption = snapshot_data.get('power_consumption', 0.0)
+    num_nodes = snapshot_data.get('num_nodes', 1581)
+    temperatures = snapshot_data.get('temperatures', [])
     
-    # Generate random power consumption (in kW) and vibration (in mm/s)
-    power_consumption = round(random.uniform(10.0, 50.0), 2)
-    vibration = round(random.uniform(0.5, 5.0), 2)
+    # Validate data
+    if len(temperatures) != 1581:
+        print(f"⚠️  Warning: Expected 1581 temperatures, got {len(temperatures)}")
     
     # Create the request payload
     payload = {
-        "machine_id": MACHINE_ID,
-        "timestep": datetime.now().isoformat(),
-        "temperatures": temperatures_str,
-        "power_consumption": power_consumption,
-        "vibration": vibration
+        "machine_id": machine_id,
+        "timestep": timestamp,
+        "simulation_time": simulation_time,
+        "num_nodes": num_nodes,
+        "temperatures": temperatures,
+        "power_consumption": power_consumption
     }
     
     # Create output directory if it doesn't exist
@@ -41,16 +48,16 @@ async def send_single_telemetry(client, iteration):
     output_filename = os.path.join(output_dir, f"telemetry_request_opcua_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
     with open(output_filename, 'w') as f:
         json.dump(payload, f, indent=2)
-    print(f"✅ [{iteration}/10] Request payload saved to: {output_filename}")
+    print(f"✅ [{iteration}] Request payload saved to: {output_filename}")
     print()
     
-    print(f"[{iteration}/10] Sending telemetry data with 10,000 temperature values via OPC UA...")
+    print(f"[{iteration}] Sending telemetry data with {len(temperatures)} temperature values via OPC UA...")
     print(f"Machine ID: {payload['machine_id']}")
-    print(f"Timestep: {payload['timestep']}")
-    print(f"Temperature sample (first 10): {temperatures[:10]}")
+    print(f"Timestamp: {payload['timestep']}")
+    print(f"Simulation Time: {payload['simulation_time']}")
+    print(f"Temperature sample (first 5): {temperatures[:5]}")
     print(f"Total values: {len(temperatures)}")
-    print(f"Power Consumption: {payload['power_consumption']} kW")
-    print(f"Vibration: {payload['vibration']} mm/s")
+    print(f"Power Consumption: {payload['power_consumption']} W")
     print()
     
     try:
@@ -64,9 +71,10 @@ async def send_single_telemetry(client, iteration):
         # Get the variable nodes
         machine_id_var = await telemetry_obj.get_child(["2:MachineID"])
         timestep_var = await telemetry_obj.get_child(["2:Timestep"])
+        simulation_time_var = await telemetry_obj.get_child(["2:SimulationTime"])
+        num_nodes_var = await telemetry_obj.get_child(["2:NumNodes"])
         temperatures_var = await telemetry_obj.get_child(["2:Temperatures"])
         power_var = await telemetry_obj.get_child(["2:PowerConsumption"])
-        vibration_var = await telemetry_obj.get_child(["2:Vibration"])
         trigger_var = await telemetry_obj.get_child(["2:TriggerStorage"])
         result_var = await telemetry_obj.get_child(["2:LastRecordID"])
         
@@ -74,9 +82,10 @@ async def send_single_telemetry(client, iteration):
         print("📤 Writing telemetry data to OPC UA variables...")
         await machine_id_var.write_value(payload['machine_id'])
         await timestep_var.write_value(payload['timestep'])
-        await temperatures_var.write_value(payload['temperatures'])
+        await simulation_time_var.write_value(payload['simulation_time'])
+        await num_nodes_var.write_value(payload['num_nodes'])
+        await temperatures_var.write_value(json.dumps(payload['temperatures']))
         await power_var.write_value(payload['power_consumption'])
-        await vibration_var.write_value(payload['vibration'])
         
         # Trigger storage by setting trigger to True
         print("📤 Triggering storage...")
@@ -100,12 +109,18 @@ async def send_single_telemetry(client, iteration):
 
 async def send_telemetry():
     """
-    Send 10 telemetry data packets via OPC UA with a 200ms delay between them.
+    Send telemetry data packets via OPC UA from snapshot JSON files.
     """
-    # Create output directory if it doesn't exist
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    output_dir = os.path.join(script_dir, "test-data", "telemetry-requests")
-    os.makedirs(output_dir, exist_ok=True)
+    # Find all snapshot JSON files in results directory
+    snapshot_files = sorted(glob.glob(os.path.join(RESULTS_DIR, "snapshot_*.json")))
+    
+    if not snapshot_files:
+        print(f"❌ No snapshot files found in {RESULTS_DIR}")
+        print("Expected files like: snapshot_00000002.json, snapshot_00000003.json, etc.")
+        return
+    
+    print(f"📁 Found {len(snapshot_files)} snapshot files in {RESULTS_DIR}")
+    print(f"📋 Files: {[os.path.basename(f) for f in snapshot_files]}\n")
     
     # Send telemetry via OPC UA
     url = "opc.tcp://localhost:4840/telemetry/server/"
@@ -116,17 +131,18 @@ async def send_telemetry():
         await client.connect()
         print(f"✅ Connected to OPC UA server at {url}\n")
         
-        # Send 10 telemetry messages
-        for i in range(1, 11):
-            await send_single_telemetry(client, i)
+        # Send telemetry for each snapshot file
+        for i, snapshot_file in enumerate(snapshot_files, 1):
+            print(f"\n[{i}/{len(snapshot_files)}] Processing {os.path.basename(snapshot_file)}")
+            await send_single_telemetry(client, i, snapshot_file)
             
             # Delay between messages (except after the last one)
-            if i < 10:
-                await asyncio.sleep(0.2)  # 200ms delay
+            if i < len(snapshot_files):
+                await asyncio.sleep(0.5)  # 500ms delay
         
         await client.disconnect()
         print("✅ Disconnected from OPC UA server")
-        print(f"\n🎉 Successfully sent all 10 telemetry messages!")
+        print(f"\n🎉 Successfully sent all {len(snapshot_files)} telemetry messages!")
         
     except ConnectionRefusedError:
         print("❌ Error: Could not connect to the OPC UA server.")
