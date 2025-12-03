@@ -3,3 +3,4 @@ numpy
 requests
 psycopg2-binary
 python-dotenv
+asyncua
